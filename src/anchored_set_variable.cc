@@ -27,6 +27,12 @@
 
 namespace modsecurity {
 
+static void addReverse(VariableValueList* to, VariableValueList& from){
+    to->reserve(from.size());
+    for (auto reverse_iter = from.rbegin(); reverse_iter != from.rend(); ++reverse_iter){
+        to->emplace_back(std::move(*reverse_iter));
+    }
+}
 
 AnchoredSetVariable::AnchoredSetVariable(Transaction *t,
     const std::string &name)
@@ -42,81 +48,67 @@ AnchoredSetVariable::~AnchoredSetVariable() {
 
 
 void AnchoredSetVariable::unset() {
-    for (const auto& x : *this) {
-        VariableValue *var = x.second;
-        delete var;
-    }
     clear();
 }
 
-
 void AnchoredSetVariable::set(const std::string &key,
-    const std::string &value, size_t offset, size_t len) {
-    std::unique_ptr<VariableOrigin> origin(new VariableOrigin());
-    std::string *v = new std::string(value);
-    VariableValue *var = new VariableValue(&m_name, &key, v);
-    delete v;
+    const std::string &value, size_t offset, size_t size) {
+    VariableValue val{&m_name, &key, &value};
+    val.addOrigin(VariableOrigin{size, offset});
 
-    origin->m_offset = offset;
-    origin->m_length = len;
-
-    var->addOrigin(std::move(origin));
-    emplace(key, var);
+    emplace(key, std::move(val));
 }
-
 
 void AnchoredSetVariable::set(const std::string &key,
     const std::string &value, size_t offset) {
-    std::unique_ptr<VariableOrigin> origin(new VariableOrigin());
-    std::string *v = new std::string(value);
-    VariableValue *var = new VariableValue(&m_name, &key, v);
-    delete v;
-
-    origin->m_offset = offset;
-    origin->m_length = value.size();
-
-    var->addOrigin(std::move(origin));
-    emplace(key, var);
+  set(key, value, offset, value.size());
 }
 
+void AnchoredSetVariable::resolve(VariableValueList *l) {
+    VariableValueList list;
+    list.reserve(this->size());
 
-void AnchoredSetVariable::resolve(
-    std::vector<const VariableValue *> *l) {
     for (const auto& x : *this) {
-        l->insert(l->begin(), new VariableValue(x.second));
+        list.emplace_back(std::move(x.second.copy()));
     }
+
+    addReverse(l, list);
 }
 
 
 void AnchoredSetVariable::resolve(
-    std::vector<const VariableValue *> *l,
+    VariableValueList *l,
     variables::KeyExclusions &ke) {
+    VariableValueList list;
+    list.reserve(this->size());
+
     for (const auto& x : *this) {
         if (!ke.toOmit(x.first)) {
-            l->insert(l->begin(), new VariableValue(x.second));
+            list.emplace_back(std::move(x.second.copy()));
         } else {
             ms_dbg_a(m_transaction, 7, "Excluding key: " + x.first
                 + " from target value.");
         }
     }
+    addReverse(l, list);
 }
 
 
 void AnchoredSetVariable::resolve(const std::string &key,
-    std::vector<const VariableValue *> *l) {
+    VariableValueList *l) {
     auto range = this->equal_range(key);
     for (auto it = range.first; it != range.second; ++it) {
-        l->push_back(new VariableValue(it->second));
+        l->emplace_back(std::move(it->second.copy()));
     }
 }
 
 
 std::unique_ptr<std::string> AnchoredSetVariable::resolveFirst(
     const std::string &key) {
-    auto range = equal_range(key);
-    for (auto it = range.first; it != range.second; ++it) {
-        std::unique_ptr<std::string> b(new std::string());
-        b->assign(it->second->getValue());
+    auto first = find(key);
+    if (first != end()) {
+        std::string* val {new std::string(first->second.getValue())};
+        std::unique_ptr<std::string> b(val);
         return b;
     }
     return nullptr;
@@ -124,32 +116,43 @@ std::unique_ptr<std::string> AnchoredSetVariable::resolveFirst(
 
 
 void AnchoredSetVariable::resolveRegularExpression(Utils::Regex *r,
-    std::vector<const VariableValue *> *l) {
+    VariableValueList *l) {
+    VariableValueList list;
+    list.reserve(this->size());
+
     for (const auto& x : *this) {
         int ret = Utils::regex_search(x.first, *r);
         if (ret <= 0) {
             continue;
         }
-        l->insert(l->begin(), new VariableValue(x.second));
+
+        list.emplace_back(std::move(x.second.copy()));
     }
+
+    addReverse(l, list);
 }
 
 
 void AnchoredSetVariable::resolveRegularExpression(Utils::Regex *r,
-    std::vector<const VariableValue *> *l,
+    VariableValueList *l,
     variables::KeyExclusions &ke) {
+    VariableValueList list;
+    list.reserve(this->size());
+
     for (const auto& x : *this) {
         int ret = Utils::regex_search(x.first, *r);
         if (ret <= 0) {
             continue;
         }
         if (!ke.toOmit(x.first)) {
-            l->insert(l->begin(), new VariableValue(x.second));
-        } else {
+            list.emplace_back(std::move(x.second.copy()));
+
+            } else {
             ms_dbg_a(m_transaction, 7, "Excluding key: " + x.first
                 + " from target value.");
         }
     }
+    addReverse(l, list);
 }
 
 

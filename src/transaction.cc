@@ -24,7 +24,6 @@
 #include <string.h>
 
 #include <cstdio>
-#include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -32,6 +31,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "utils/time_format.h"
 #include "modsecurity/actions/action.h"
 #include "src/actions/disruptive/deny.h"
 #include "modsecurity/intervention.h"
@@ -458,8 +458,9 @@ int Transaction::processURI(const char *uri, const char *method,
 
     m_variableRequestMethod.set(method, 0);
 
+    std::string method_str{method};
 
-    std::string requestLine(std::string(method) + " " + std::string(uri));
+    std::string requestLine(method_str + " " + std::string(uri));
     m_variableRequestLine.set(requestLine \
         + " HTTP/" + std::string(http_version), m_variableOffset);
 
@@ -476,12 +477,13 @@ int Transaction::processURI(const char *uri, const char *method,
             new std::string(m_uri_decoded));
     }
 
+    size_t qry_str_offset{0};
 
     if (pos_raw != std::string::npos) {
         std::string qry = std::string(uri_s, pos_raw + 1,
             uri_s.length() - (pos_raw + 1));
-        m_variableQueryString.set(qry, pos_raw + 1
-            + std::string(method).size() + 1);
+        qry_str_offset = pos_raw + method_str.size() + 2;
+        m_variableQueryString.set(qry, qry_str_offset);
     }
 
     std::string path_info;
@@ -509,7 +511,7 @@ int Transaction::processURI(const char *uri, const char *method,
             strlen(method) + 1 + offset + 1);
     }
 
-    m_variableOffset = m_variableRequestLine.m_value.size();
+    m_variableOffset = m_variableRequestLine.getValue().size();
 
     std::string parsedURI = m_uri_decoded;
     // The more popular case is without domain
@@ -535,13 +537,13 @@ int Transaction::processURI(const char *uri, const char *method,
         }
     }
 
-    m_variableRequestURI.set(parsedURI, std::string(method).size() + 1,
+    m_variableRequestURI.set(parsedURI, method_str.size() + 1,
         uri_s.size());
-    m_variableRequestURIRaw.set(uri, std::string(method).size() + 1);
+    m_variableRequestURIRaw.set(uri, method_str.size() + 1);
 
-    if (m_variableQueryString.m_value.empty() == false) {
-        extractArguments("GET", m_variableQueryString.m_value,
-            m_variableQueryString.m_offset);
+    if (m_variableQueryString.getValue().empty() == false) {
+        extractArguments("GET", m_variableQueryString.getValue(),
+            qry_str_offset);
     }
 
     m_variableOffset = m_variableOffset + 1;
@@ -784,7 +786,7 @@ int Transaction::processRequestBody() {
         return true;
     }
 
-    if (m_variableInboundDataError.m_value.empty() == true) {
+    if (m_variableInboundDataError.getValue().empty() == true) {
         m_variableInboundDataError.set("0", 0);
     }
 
@@ -915,11 +917,10 @@ int Transaction::processRequestBody() {
      * computationally intensive.
      */
     std::string fullRequest;
-    std::vector<const VariableValue *> l;
+    VariableValueList l;
     m_variableRequestHeaders.resolve(&l);
     for (auto &h : l) {
-        fullRequest = fullRequest + h->getKey() + ": " + h->getValue() + "\n";
-        delete h;
+        fullRequest = fullRequest + h.getKey() + ": " + h.getValue() + "\n";
     }
 
     fullRequest = fullRequest + "\n\n";
@@ -1197,11 +1198,11 @@ int Transaction::processResponseBody() {
 
     std::set<std::string> &bi = \
         m_rules->m_responseBodyTypeToBeInspected.m_value;
-    auto t = bi.find(m_variableResponseContentType.m_value);
+    auto t = bi.find(m_variableResponseContentType.getValue());
     if (t == bi.end()
         && m_rules->m_responseBodyTypeToBeInspected.m_set == true) {
         ms_dbg(5, "Response Content-Type is " \
-            + m_variableResponseContentType.m_value \
+            + m_variableResponseContentType.getValue() \
             + ". It is not marked to be inspected.");
         std::string validContetTypes("");
         for (std::set<std::string>::iterator i = bi.begin();
@@ -1212,7 +1213,7 @@ int Transaction::processResponseBody() {
             + validContetTypes);
         return true;
     }
-    if (m_variableOutboundDataError.m_value.empty() == true) {
+    if (m_variableOutboundDataError.getValue().empty() == true) {
         m_variableOutboundDataError.set("0", m_variableOffset);
     }
 
@@ -1248,11 +1249,11 @@ int Transaction::appendResponseBody(const unsigned char *buf, size_t len) {
 
     std::set<std::string> &bi = \
         this->m_rules->m_responseBodyTypeToBeInspected.m_value;
-    auto t = bi.find(m_variableResponseContentType.m_value);
+    auto t = bi.find(m_variableResponseContentType.getValue());
     if (t == bi.end() && bi.empty() == false) {
         ms_dbg(4, "Not appending response body. " \
             "Response Content-Type is " \
-            + m_variableResponseContentType.m_value \
+            + m_variableResponseContentType.getValue() \
             + ". It is not marked to be inspected.");
         return true;
     }
@@ -1452,13 +1453,6 @@ bool Transaction::intervention(ModSecurityIntervention *it) {
 std::string Transaction::toOldAuditLogFormatIndex(const std::string &filename,
     double size, const std::string &md5) {
     std::stringstream ss;
-    struct tm timeinfo;
-    char tstr[300];
-
-    memset(tstr, '\0', 300);
-    localtime_r(&this->m_timeStamp, &timeinfo);
-
-    strftime(tstr, 299, "[%d/%b/%Y:%H:%M:%S %z]", &timeinfo);
 
     ss << utils::string::dash_if_empty(
        m_variableRequestHeaders.resolveFirst("Host").get())
@@ -1466,7 +1460,7 @@ std::string Transaction::toOldAuditLogFormatIndex(const std::string &filename,
     ss << utils::string::dash_if_empty(this->m_clientIpAddress->c_str()) << " ";
     /** TODO: Check variable */
     variables::RemoteUser *r = new variables::RemoteUser("REMOTE_USER");
-    std::vector<const VariableValue *> l;
+    VariableValueList l;
     r->evaluate(this, NULL, &l);
     delete r;
 
@@ -1477,7 +1471,8 @@ std::string Transaction::toOldAuditLogFormatIndex(const std::string &filename,
     //ss << utils::string::dash_if_empty(
     //    this->m_collections.resolveFirst("LOCAL_USER").get());
     //ss << " ";
-    ss << tstr << " ";
+    std::string time_str = get_formatted_time_string("[%d/%b/%Y:%H:%M:%S %z]", &this->m_timeStamp);
+    ss << time_str << " ";
 
     ss << "\"";
     ss << utils::string::dash_if_empty(m_variableRequestMethod.evaluate());
@@ -1512,36 +1507,29 @@ std::string Transaction::toOldAuditLogFormatIndex(const std::string &filename,
 std::string Transaction::toOldAuditLogFormat(int parts,
     const std::string &trailer) {
     std::stringstream audit_log;
-    struct tm timeinfo;
-    char tstr[300];
-
-    memset(tstr, '\0', 300);
-    localtime_r(&this->m_timeStamp, &timeinfo);
 
     audit_log << "--" << trailer << "-" << "A--" << std::endl;
-    strftime(tstr, 299, "[%d/%b/%Y:%H:%M:%S %z]", &timeinfo);
-    audit_log << tstr;
+    audit_log << get_formatted_time_string("[%d/%b/%Y:%H:%M:%S %z]", &this->m_timeStamp);
     audit_log << " " << m_id->c_str();
-    audit_log << " " << this->m_clientIpAddress->c_str();
+    audit_log << " " << this->m_clientIpAddress;
     audit_log << " " << this->m_clientPort;
-    audit_log << " " << m_serverIpAddress->c_str();
+    audit_log << " " << m_serverIpAddress;
     audit_log << " " << this->m_serverPort;
     audit_log << std::endl;
 
     if (parts & audit_log::AuditLog::BAuditLogPart) {
-        std::vector<const VariableValue *> l;
         audit_log << "--" << trailer << "-" << "B--" << std::endl;
         audit_log << utils::string::dash_if_empty(
             m_variableRequestMethod.evaluate());
         audit_log << " " << this->m_uri.c_str() << " " << "HTTP/";
         audit_log << this->m_httpVersion.c_str() << std::endl;
 
-        m_variableRequestHeaders.resolve(&l);
-        for (auto &h : l) {
+        VariableValueList request_headers;
+        m_variableRequestHeaders.resolve(&request_headers);
+        for (auto &request_header : request_headers) {
             size_t pos = strlen("REQUEST_HEADERS:");
-            audit_log << h->getKeyWithCollection().c_str() + pos << ": ";
-            audit_log << h->getValue().c_str() << std::endl;
-            delete h;
+            audit_log << request_header.getKeyWithCollection().c_str() + pos << ": ";
+            audit_log << request_header.getValue() << std::endl;
         }
         audit_log << std::endl;
     }
@@ -1569,16 +1557,15 @@ std::string Transaction::toOldAuditLogFormat(int parts,
         audit_log << std::endl;
     }
     if (parts & audit_log::AuditLog::FAuditLogPart) {
-        std::vector<const VariableValue *> l;
-
         audit_log << "--" << trailer << "-" << "F--" << std::endl;
         audit_log << "HTTP/" << m_httpVersion.c_str()  << " ";
         audit_log << this->m_httpCodeReturned << std::endl;
-        m_variableResponseHeaders.resolve(&l);
-        for (auto &h : l) {
-            audit_log << h->getKey().c_str() << ": ";
-            audit_log << h->getValue().c_str() << std::endl;
-            delete h;
+
+        VariableValueList response_headers;
+        m_variableResponseHeaders.resolve(&response_headers);
+        for (const auto &response_header : response_headers) {
+            audit_log << response_header.getKey() << ": ";
+            audit_log << response_header.getValue() << std::endl;
         }
     }
     audit_log << std::endl;
@@ -1668,15 +1655,14 @@ std::string Transaction::toJSON(int parts) {
 
     /* request headers */
     if (parts & audit_log::AuditLog::BAuditLogPart) {
-        std::vector<const VariableValue *> l;
         yajl_gen_string(g, reinterpret_cast<const unsigned char*>("headers"),
             strlen("headers"));
         yajl_gen_map_open(g);
 
-        m_variableRequestHeaders.resolve(&l);
-        for (auto &h : l) {
-            LOGFY_ADD(h->getKey().c_str(), h->getValue().c_str());
-            delete h;
+        VariableValueList request_headers;
+        m_variableRequestHeaders.resolve(&request_headers);
+        for (auto &request_header : request_headers) {
+            LOGFY_ADD(request_header.getKey().c_str(), request_header.getValue().c_str());
         }
 
         /* end: request headers */
@@ -1698,15 +1684,14 @@ std::string Transaction::toJSON(int parts) {
 
     /* response headers */
     if (parts & audit_log::AuditLog::FAuditLogPart) {
-        std::vector<const VariableValue *> l;
         yajl_gen_string(g, reinterpret_cast<const unsigned char*>("headers"),
             strlen("headers"));
         yajl_gen_map_open(g);
 
-        m_variableResponseHeaders.resolve(&l);
-        for (auto &h : l) {
-            LOGFY_ADD(h->getKey().c_str(), h->getValue().c_str());
-            delete h;
+        VariableValueList response_headers;
+        m_variableResponseHeaders.resolve(&response_headers);
+        for (auto &response_header : response_headers) {
+            LOGFY_ADD(response_header.getKey().c_str(), response_header.getValue().c_str());
         }
 
         /* end: response headers */
@@ -1753,36 +1738,38 @@ std::string Transaction::toJSON(int parts) {
             reinterpret_cast<const unsigned char*>("messages"),
             strlen("messages"));
         yajl_gen_array_open(g);
-        for (auto a : m_rulesMessages) {
+        for (auto& rule_message : m_rulesMessages) {
             yajl_gen_map_open(g);
-            LOGFY_ADD("message", a.m_message.c_str());
+            LOGFY_ADD("message", rule_message.m_message.c_str());
             yajl_gen_string(g,
                 reinterpret_cast<const unsigned char*>("details"),
                 strlen("details"));
             yajl_gen_map_open(g);
-            LOGFY_ADD("match", a.m_match.c_str());
-            LOGFY_ADD("reference", a.m_reference.c_str());
-            LOGFY_ADD("ruleId", std::to_string(a.m_ruleId).c_str());
-            LOGFY_ADD("file", a.m_ruleFile->c_str());
-            LOGFY_ADD("lineNumber", std::to_string(a.m_ruleLine).c_str());
-            LOGFY_ADD("data", a.m_data.c_str());
-            LOGFY_ADD("severity", std::to_string(a.m_severity).c_str());
-            LOGFY_ADD("ver", a.m_ver.c_str());
-            LOGFY_ADD("rev", a.m_rev.c_str());
+            LOGFY_ADD("match", rule_message.m_match.c_str());
+            LOGFY_ADD("reference", rule_message.m_reference.c_str());
+            LOGFY_ADD("ruleId", std::to_string(rule_message.m_ruleId).c_str());
+            LOGFY_ADD("file", rule_message.m_ruleFile->c_str());
+            LOGFY_ADD("lineNumber", std::to_string(rule_message.m_ruleLine).c_str());
+            LOGFY_ADD("data", rule_message.m_data.c_str());
+            LOGFY_ADD("severity", std::to_string(rule_message.m_severity).c_str());
+            LOGFY_ADD("ver", rule_message.m_ver.c_str());
+            LOGFY_ADD("rev", rule_message.m_rev.c_str());
 
             yajl_gen_string(g,
                 reinterpret_cast<const unsigned char*>("tags"),
                 strlen("tags"));
             yajl_gen_array_open(g);
-            for (auto b : a.m_tags) {
+            for (const auto& tag : rule_message.m_tags) {
                 yajl_gen_string(g,
-                    reinterpret_cast<const unsigned char*>(b.c_str()),
-                    strlen(b.c_str()));
+                    reinterpret_cast<const unsigned char*>(tag.c_str()),
+                    tag.size());
             }
             yajl_gen_array_close(g);
 
-            LOGFY_ADD("maturity", std::to_string(a.m_maturity).c_str());
-            LOGFY_ADD("accuracy", std::to_string(a.m_accuracy).c_str());
+            const std::string maturity_str{ std::to_string(rule_message.m_maturity) };
+            LOGFY_ADD("maturity", maturity_str.c_str());
+            const std::string accuracy_str{ std::to_string(rule_message.m_accuracy) };
+            LOGFY_ADD("accuracy", accuracy_str.c_str());
             yajl_gen_map_close(g);
             yajl_gen_map_close(g);
         }

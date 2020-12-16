@@ -138,8 +138,6 @@ const std::string& ModSecurity::whoAmI() {
     platform = "MacOSX";
 #elif FREEBSD
     platform = "FreeBSD";
-#elif DRAGONFLY
-    platform = "DragonFlyBSD";
 #elif NETBSD
     platform = "NetBSD";
 #elif WIN32
@@ -258,7 +256,7 @@ int ModSecurity::processContentOffset(const char *content, size_t len,
             strlen("highlight"));
 
         yajl_gen_array_open(g);
-    while (vars.size() > 3) {
+    while (vars.size() > 0) {
         std::string value;
         yajl_gen_map_open(g);
         vars.pop_back();
@@ -305,7 +303,7 @@ int ModSecurity::processContentOffset(const char *content, size_t len,
             varValue.size());
     yajl_gen_map_close(g);
 
-    while (!trans.empty()) {
+    while (trans.size() > 0) {
         modsecurity::actions::transformations::Transformation *t;
         std::string varValueRes;
         yajl_gen_map_open(g);
@@ -340,7 +338,7 @@ int ModSecurity::processContentOffset(const char *content, size_t len,
 
     yajl_gen_map_open(g);
 
-    while (ops.size() > 3) {
+    while (ops.size() > 0) {
         std::string value;
         yajl_gen_string(g, reinterpret_cast<const unsigned char*>("highlight"),
             strlen("highlight"));

@@ -18,7 +18,7 @@
 #include <string>
 #include <iostream>
 #include <memory>
-#include <list>
+#include <vector>
 #include <utility>
 #endif
 
@@ -37,7 +37,7 @@ namespace modsecurity {
 class Collection;
 class VariableValue {
  public:
-    using Origins = std::list<std::unique_ptr<VariableOrigin>>;
+    using Origins = std::vector<VariableOrigin>;
 
     explicit VariableValue(const std::string *key,
         const std::string *value = nullptr)
@@ -56,22 +56,27 @@ class VariableValue {
         m_value(*value)
     { }
 
-    explicit VariableValue(const VariableValue *o) :
-        m_collection(o->m_collection),
-        m_key(o->m_key),
-        m_keyWithCollection(o->m_keyWithCollection),
-        m_value(o->m_value)
-    {
-        for (auto &i : o->m_orign) {
-            std::unique_ptr<VariableOrigin> origin(new VariableOrigin());
-            origin->m_offset = i->m_offset;
-            origin->m_length = i->m_length;
-            m_orign.push_back(std::move(origin));
-        }
+    VariableValue copy() const {
+        return VariableValue{*this};
     }
 
-    VariableValue(const VariableValue &v) = delete;
+    VariableValue(VariableValue&& val) noexcept
+    :m_orign{std::move(val.m_orign)}
+    ,m_collection{std::move(val.m_collection)}
+    ,m_key{std::move(val.m_key)}
+    ,m_keyWithCollection{std::move(val.m_keyWithCollection)}
+    ,m_value{std::move(val.m_value)} {
 
+    }
+    VariableValue& operator=(VariableValue&& val){
+        m_orign = std::move(val.m_orign);
+        m_collection = std::move(val.m_collection);
+        m_key = std::move(val.m_key);
+        m_keyWithCollection = std::move(val.m_keyWithCollection);
+        m_value = std::move(val.m_value);
+
+        return *this;
+    }
 
     const std::string& getKey() const {
         return m_key;
@@ -87,7 +92,9 @@ class VariableValue {
         return m_collection;
     }
 
-
+    std::string& getValue() {
+        return m_value;
+    }
     const std::string& getValue() const {
         return m_value;
     }
@@ -98,16 +105,21 @@ class VariableValue {
     }
 
 
-    void addOrigin(std::unique_ptr<VariableOrigin> origin) {
-        m_orign.push_back(std::move(origin));
+    void addOrigin(VariableOrigin&& origin) {
+        m_orign.push_back(origin);
     }
-
+    void addOrigin(const VariableOrigin& origin) {
+        m_orign.push_back(origin);
+    }
 
     const Origins& getOrigin() const {
         return m_orign;
     }
 
  private:
+
+    VariableValue(const VariableValue &v) = default;
+
     Origins m_orign;
     std::string m_collection;
     std::string m_key;
@@ -115,6 +127,7 @@ class VariableValue {
     std::string m_value;
 };
 
+using VariableValueList = std::vector<VariableValue>;
 }  // namespace modsecurity
 #endif
 

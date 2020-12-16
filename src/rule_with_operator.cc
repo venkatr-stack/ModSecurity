@@ -181,8 +181,7 @@ inline void RuleWithOperator::getFinalVars(variables::Variables *vars,
     variables::Variables addition;
     getVariablesExceptions(trans, exclusion, &addition);
 
-    for (int i = 0; i < m_variables->size(); i++) {
-        Variable *variable = m_variables->at(i);
+    for (Variable *variable : *m_variables) {
         if (exclusion->contains(variable)) {
             continue;
         }
@@ -206,8 +205,7 @@ inline void RuleWithOperator::getFinalVars(variables::Variables *vars,
         vars->push_back(variable);
     }
 
-    for (int i = 0; i < addition.size(); i++) {
-        Variable *variable = addition.at(i);
+    for (Variable *variable : addition) {
         vars->push_back(variable);
     }
 }
@@ -271,35 +269,32 @@ bool RuleWithOperator::evaluate(Transaction *trans,
     getFinalVars(&vars, &exclusion, trans);
 
     for (auto &var : vars) {
-        std::vector<const VariableValue *> e;
+        VariableValueList e;
         if (!var) {
             continue;
         }
         var->evaluate(trans, this, &e);
-        for (const VariableValue *v : e) {
-            const std::string &value = v->getValue();
-            const std::string &key = v->getKeyWithCollection();
+        for (const VariableValue &v : e) {
+            const std::string &value = v.getValue();
+            const std::string &key = v.getKeyWithCollection();
 
-            if (exclusion.contains(v) ||
-                std::find_if(trans->m_ruleRemoveTargetById.begin(),
-                    trans->m_ruleRemoveTargetById.end(),
-                    [&, v, this](std::pair<int, std::string> &m) -> bool {
-                        return m.first == m_ruleId && m.second == v->getKeyWithCollection();
-                    }) != trans->m_ruleRemoveTargetById.end()
-            ) {
-                delete v;
-                v = NULL;
+            if (exclusion.contains(&v)){
                 continue;
             }
-            if (exclusion.contains(v) ||
-                std::find_if(trans->m_ruleRemoveTargetByTag.begin(),
+            if (std::find_if(trans->m_ruleRemoveTargetById.begin(),
+                    trans->m_ruleRemoveTargetById.end(),
+                    [&v, this](std::pair<int, std::string> &m) -> bool {
+                        return m.first == m_ruleId && m.second == v.getKeyWithCollection();
+                    }) != trans->m_ruleRemoveTargetById.end()
+            ) {
+                continue;
+            }
+            if (std::find_if(trans->m_ruleRemoveTargetByTag.begin(),
                     trans->m_ruleRemoveTargetByTag.end(),
-                    [&, v, trans, this](std::pair<std::string, std::string> &m) -> bool {
-                        return containsTag(m.first, trans) && m.second == v->getKeyWithCollection();
+                    [&v, trans, this](std::pair<std::string, std::string> &m) -> bool {
+                        return containsTag(m.first, trans) && m.second == v.getKeyWithCollection();
                     }) != trans->m_ruleRemoveTargetByTag.end()
             ) {
-                delete v;
-                v = NULL;
                 continue;
             }
 
@@ -308,16 +303,15 @@ bool RuleWithOperator::evaluate(Transaction *trans,
             executeTransformations(trans, value, values);
 
             for (const auto &valueTemp : values) {
-                bool ret;
-                std::string valueAfterTrans = std::move(*valueTemp.first);
+                const std::string& valueAfterTrans = valueTemp.first;
 
-                ret = executeOperatorAt(trans, key, valueAfterTrans, ruleMessage);
+                bool ret = executeOperatorAt(trans, key, valueAfterTrans, ruleMessage);
 
-                if (ret == true) {
+                if (ret) {
                     ruleMessage->m_match = m_operator->resolveMatchMessage(trans,
                         key, value);
-                    for (auto &i : v->getOrigin()) {
-                        ruleMessage->m_reference.append(i->toText());
+                    for (auto &i : v.getOrigin()) {
+                        ruleMessage->m_reference.append(i.toText());
                     }
 
                     ruleMessage->m_reference.append(*valueTemp.second);
@@ -330,8 +324,6 @@ bool RuleWithOperator::evaluate(Transaction *trans,
                     globalRet = true;
                 }
             }
-            delete v;
-            v = NULL;
         }
         e.clear();
         e.reserve(4);

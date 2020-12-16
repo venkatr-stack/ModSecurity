@@ -111,7 +111,6 @@ enum AllowType : int;
 namespace RequestBodyProcessor {
 class XML;
 class JSON;
-class MultipartPartTmpFile;
 }
 namespace operators {
 class Operator;
@@ -290,11 +289,7 @@ class TransactionAnchoredVariables {
 class TransactionSecMarkerManagement {
  public:
     bool isInsideAMarker() const {
-        if (m_marker) {
-            return true;
-        }
-
-        return false;
+        return bool(m_marker);
     }
 
     std::shared_ptr<std::string> getCurrentMarker() const {
@@ -612,8 +607,6 @@ class Transaction : public TransactionAnchoredVariables, public TransactionSecMa
     std::string m_variableTimeSec;
     std::string m_variableTimeWDay;
     std::string m_variableTimeYear;
-
-    std::vector<std::shared_ptr<RequestBodyProcessor::MultipartPartTmpFile>> m_multipartPartTmpFiles;
 
  private:
     /**
